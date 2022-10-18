@@ -1,14 +1,14 @@
 # acorn_tape_parse.py
 
-This script in this repository extracts files from WAV recordings of cassettes saved by 8-bit Acorn computers, including the BBC Micro, Acorn Electron and BBC Master computers.
+This Python script extracts binary files from WAV recordings of audio cassette tapes recorded by 8-bit Acorn computers, including the BBC Micro, Acorn Electron and BBC Master computers.
 
 This script was used by the author to recover all the Acorn tapes archived on the website <https://files.dcford.org.uk/>.
 
-By default, this script simply exports all the files to a specified output directory, though it is simple to call the <WavAcornFileSearch> class from an external script to perform other actions on the files found.
+By default, this script simply exports all the files to a specified output directory and outputs a textual summary of the metadata associated with each file (load address, etc.). If a more sophisticated export is required, it is simple to call the <WavAcornFileSearch> class from an external script to perform other actions on the files found.
 
 ## Limitations
 
-* This script only accepts 16-bit mono wav files as input.
+* This script only accepts 16-bit mono wav files as input. Any bit rate is supported, but >= 44.1kHz is recommended.
 
 * This script is quite sensitive to low-frequency noise. You may be able to recover more files if you use audio-editing software (e.g. Adobe Audition or Audacity) to pass the input audio through a ~100-Hz high-pass filter before calling this script.
 
