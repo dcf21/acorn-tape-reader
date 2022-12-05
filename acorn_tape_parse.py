@@ -33,11 +33,7 @@ to call the <WavAcornFileSearch> class from an external script to perform other 
 
 Limitations:
 
-* This script only accepts 16-bit mono wav files as input. Any bit rate is supported, but >= 44.1kHz is recommended.
-
-* This script is quite sensitive to low-frequency noise. You may be able to recover more files if you use audio-editing
-software (e.g. Adobe Audition or Audacity) to pass the input audio through a ~100-Hz high-pass filter before calling
-this script.
+* Any bit rate is supported, but >= 44.1kHz is recommended.
 
 * This script currently assumes 1200 baud, as used by almost all software. It would probably be simple to add support
 for the BBC Micro's 300 baud setting.
@@ -55,13 +51,14 @@ CRC checksum calculation: https://beebwiki.mdfs.net/CRC-16
 
 import argparse
 import copy
+import itertools
 import logging
 import os
 import re
 import sys
 
 from operator import itemgetter
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 from constants import ascii
 from wav_file_reader import WavFileReader
@@ -86,12 +83,17 @@ class WavAcornFileSearch:
         # Input settings
         self.input_filename: str = input_filename
 
+        # Open wav file
+        self.wav_file = WavFileReader(input_filename=self.input_filename,
+                                      min_wave_amplitude_fraction=0.03)
+
         # All the phase positions we use to count wave cycles
         # These represent counting downward zero crossings, wave peaks, upward zero crossings, and wave troughs.
         self.all_phases: Tuple = (0, 90, 180, 270)
 
-        # Open wav file
-        self.wav_file = WavFileReader(input_filename=self.input_filename)
+        # List of (channel, phase) configurations
+        self.all_configs: List[Tuple[int, int]] = list(itertools.product(range(self.wav_file.channels),
+                                                                         self.all_phases))
 
         # Set search settings
         self.frequency_max_variance = 0.25  # Maximum fractional variance of tone frequencies from 1200/2400 Hz
@@ -107,33 +109,35 @@ class WavAcornFileSearch:
             List of file objects recovered
         """
 
-        # Build a dictionary of all the file objects we recover at each phase
-        files_recovered_by_phase: Dict[int, List] = {}
+        # Build a dictionary of all the file objects we recover with each configuration
+        files_recovered_by_config: Dict[int, List] = {}
 
         # Search for files at each phase in turn
-        for phase in self.all_phases:
-            logging.debug("Searching at phase {:d}".format(phase))
-            files_recovered_by_phase[phase] = self.search_for_files(phase=phase)
+        for config_id, (channel, phase) in enumerate(self.all_configs):
+            logging.debug("Searching channel {:d} at phase {:d}".format(channel, phase))
+            self.wav_file.select_channel(channel=channel)
+            self.wav_file.apply_high_pass_filter(cutoff=250)  # Apply high-pass filter
+            files_recovered_by_config[config_id] = self.search_for_files(phase=phase)
 
-        # Add up total number of bytes recovered at each phase
-        bytes_by_phase = {}
-        for phase in self.all_phases:
-            bytes_recovered = 0
-            for file in files_recovered_by_phase[phase]:
-                bytes_recovered += file['byte_count']
-            bytes_by_phase[phase] = bytes_recovered
+        # Add up total number of bytes recovered with each configuration
+        bytes_by_config: Dict[int, int] = {}
+        for config_id in range(len(self.all_configs)):
+            bytes_recovered: int = 0
+            for file in files_recovered_by_config[config_id]:
+                bytes_recovered += file['byte_count_without_error']
+            bytes_by_config[config_id] = bytes_recovered
 
-        # Merge the file lists we recovered from each phase
-        sorted_phases = sorted(bytes_by_phase.items(), key=itemgetter(1), reverse=True)
+        # Merge the file lists we recovered with each configuration
+        sorted_config_ids: Sequence[int, int] = sorted(bytes_by_config.items(), key=itemgetter(1), reverse=True)
 
-        # Build merged list of all the files we recovered at different phases
+        # Build merged list of all the files we recovered with each configuration
         merged_file_list = []
         timing_margin = 0.25  # maximum allowed mismatch between time position of a file seen at different phases (sec)
 
-        # Loop over all phase positions
-        for phase in [item[0] for item in sorted_phases]:
-            # Loop over all files recovered at each phase position
-            for file in files_recovered_by_phase[phase]:
+        # Loop over all configurations
+        for config_id in [item[0] for item in sorted_config_ids]:
+            # Loop over all files recovered with each configuration
+            for file in files_recovered_by_config[config_id]:
                 # Reject items where we didn't even successfully recover the filename
                 if file['filename'] is None:
                     continue
@@ -141,7 +145,7 @@ class WavAcornFileSearch:
                 time_start = file['start_time']
                 time_end = file['final_block']['block_end_time']
 
-                # Check if file has already been recovered at a previous phase setting
+                # Check if file has already been recovered at a previous config setting
                 file_matches_index = None
                 action = None
                 for existing_file_index, existing_file in enumerate(merged_file_list):
@@ -169,7 +173,7 @@ class WavAcornFileSearch:
                         break
 
                     # If this file recovered more bytes than the previous instance, replace previous instance
-                    if file['byte_count'] >= existing_file['byte_count']:
+                    if file['byte_count_without_error'] >= existing_file['byte_count_without_error']:
                         action = "replace append"
                         break
 
@@ -180,27 +184,23 @@ class WavAcornFileSearch:
 
                 # We have found a new file
                 if file_matches_index is None:
-                    file['phases'] = [phase]
+                    file['config_ids'] = [config_id]
                     merged_file_list.append(file)
                 # We have found a better version of an existing file
                 elif action == "replace":
-                    file['phases'] = [phase]
+                    file['config_ids'] = [config_id]
                     merged_file_list[file_matches_index] = file
                 # We have found an equally good version of an existing file; update list of phases where we found it
                 elif action == "append":
-                    merged_file_list[file_matches_index]['phases'].append(phase)
+                    merged_file_list[file_matches_index]['config_ids'].append(config_id)
                 # We have found a better version of an existing file, but it still didn't fully load properly
                 elif action == "replace append":
-                    phases = merged_file_list[file_matches_index]['phases'] + [phase]
-                    file['phases'] = phases
+                    config_ids = merged_file_list[file_matches_index]['config_ids'] + [config_id]
+                    file['config_ids'] = config_ids
                     merged_file_list[file_matches_index] = file
 
         # Sort list of the files we found by start time, to create chronological index of the tape
         merged_file_list.sort(key=itemgetter('start_time'))
-
-        # Print a summary of the files we found
-        file_summary = self.summarise_files(file_list=merged_file_list)
-        logging.info(file_summary)
 
         # Return a list of all the file objects we recovered
         return merged_file_list
@@ -428,7 +428,7 @@ class WavAcornFileSearch:
                 # If yes, then extract the value of this byte, in the range 0-255
                 byte_value = sum([int(i['bit']) * pow(2, c) for c, i in enumerate(bit_list[position + 1:position + 9])])
 
-                # If we weren't previous synchronised, then we are now! Start a new block
+                # If we weren't previously synchronised, then we are now! Start a new block
                 if not synchronised:
                     byte_list.append([])
                 # Add this byte to the current block of bytes
@@ -651,13 +651,14 @@ class WavAcornFileSearch:
             'data': [],
             'start_time': None,
             'byte_count': 0,
+            'byte_count_without_error': 0,
             'missed_blocks': [],
             'error_blocks': [],
             'first_block': None,
             'final_block': None,
             'message': '',
             'is_ok': False,
-            'phases': []
+            'config_ids': []
         }
 
         # Start off with a null descriptor that we use to describe the file we're currently reading
@@ -717,6 +718,7 @@ class WavAcornFileSearch:
                 current_file_info['data'].extend([i['byte'] for i in block['data_payload']])
                 current_file_info['start_time'] = block['block_start_time']
                 current_file_info['byte_count'] = block['data_length']
+                current_file_info['byte_count_without_error'] = block['data_length'] if not block['error'] else 0
                 current_file_info['first_block'] = block
                 current_file_info['final_block'] = block
             # We have another block of the file we're already reading
@@ -727,6 +729,8 @@ class WavAcornFileSearch:
                 current_file_info['missed_blocks'].extend(range(current_file_info['final_block']['block_number'] + 1,
                                                                 block['block_number']))
                 current_file_info['byte_count'] += block['data_length']
+                if not block['error']:
+                    current_file_info['byte_count_without_error'] += block['data_length']
                 current_file_info['final_block'] = block
                 # If this block failed its CRC check, report an error
                 if block['error']:
@@ -776,8 +780,7 @@ class WavAcornFileSearch:
                 new_file_byte_array = bytearray(item['data'])
                 file_handle.write(new_file_byte_array)
 
-    @staticmethod
-    def summarise_files(file_list: List):
+    def summarise_files(self, file_list: List):
         """
         Display summary information about the files we found on the tape.
 
@@ -791,7 +794,7 @@ class WavAcornFileSearch:
         output = ""
 
         # Print column headings
-        output += "[{:10s}] [{:10s}] [{:5s}] [{:10s}] {:4s} {:8s} {:8s} {:8s} {:6s} {:s}\n".format(
+        output += "[{:10s}] [{:10s}] [{:5s}] [{:10s}] {:4s} {:8s} {:8s} {:8s} {:10s} {:s}\n".format(
             "Start/sec", "End/sec", "Stat", "Filename", "Size", "LoadAddr", "ExecAddr", "NextAddr",
             "Phases", "Information"
         )
@@ -799,8 +802,17 @@ class WavAcornFileSearch:
         # Print information about each file in turn
         for file_info in file_list:
             if file_info['filename'] is not None:
+                # Make an indication of which configurations recovered this file
+                config_indicator = ""
+                for config_id in range(len(self.all_configs)):
+                    if config_id in file_info['config_ids']:
+                        config_indicator += "ABCDEFGH"[config_id]
+                    else:
+                        config_indicator += "-"
+
+                # Write output line
                 output += (
-                    "[{:10.5f}] [{:10.5f}] [{:5s}] [{:10s}] {:04X} {:08X} {:08X} {:08X} [{}{}{}{}] {:s}\n".format(
+                    "[{:10.5f}] [{:10.5f}] [{:5s}] [{:10s}] {:04X} {:08X} {:08X} {:08X} [{:8s}] {:s}\n".format(
                         file_info['start_time'],
                         file_info['final_block']['block_end_time'],
                         " PASS" if file_info['is_ok'] else "*FAIL",
@@ -808,10 +820,7 @@ class WavAcornFileSearch:
                         file_info['first_block']['load_addr'],
                         file_info['first_block']['exec_addr'],
                         file_info['first_block']['next_addr'],
-                        "A" if (0 in file_info['phases']) else "-",
-                        "B" if (90 in file_info['phases']) else "-",
-                        "C" if (180 in file_info['phases']) else "-",
-                        "D" if (270 in file_info['phases']) else "-",
+                        config_indicator,
                         file_info['message']
                     ))
 
@@ -861,7 +870,7 @@ if __name__ == "__main__":
     # Read input parameters
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input',
-                        required=True,
+                        default="/mnt/ganymede4/dcf21/cassette_archive/box01/box01_tape002a_acorn_eu_1992_april.wav",
                         type=str,
                         dest="input_filename",
                         help="Input WAV file to process")
@@ -896,6 +905,10 @@ if __name__ == "__main__":
 
     # Search for Acorn files
     file_list = processor.search_wav_file()
+
+    # Print a summary of the files we found
+    file_summary = processor.summarise_files(file_list=file_list)
+    logging.info(file_summary)
 
     # Extract the Acorn files we found to output
     processor.extract_files(file_list=file_list, output_dir=args.output_directory)
