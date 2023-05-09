@@ -4,13 +4,14 @@
 #
 # This Python script extracts binary files from WAV recordings of audio
 # cassette tapes recorded by 8-bit Acorn computers, including the BBC
-# Micro, Acorn Electron and BBC Master computers.
+# Micro, Acorn Electron and BBC Master computers. It can also produce
+# UEF tape images for use in emulators such as BeebEm or JSBeeb.
 #
-# Copyright (C) 2022 Dominic Ford <https://dcford.org.uk/>
+# Copyright (C) 2022-2023 Dominic Ford <https://dcford.org.uk/>
 #
 # This code is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
-# Foundation; either version 2 of the License, or (at your option) any later
+# Foundation; either version 3 of the License, or (at your option) any later
 # version.
 #
 # You should have received a copy of the GNU General Public License along with
@@ -22,24 +23,28 @@
 
 """
 This Python script extracts binary files from WAV recordings of audio cassette tapes recorded by 8-bit Acorn
-computers, including the BBC Micro, Acorn Electron and BBC Master computers.
+computers, including the BBC Micro, Acorn Electron and BBC Master computers. It can also produce UEF tape images for
+use in emulators such as BeebEm or JSBeeb.
 
 This script was used by the author to recover all the Acorn tapes archived on the website
 <https://files.dcford.org.uk/>.
 
-By default, this script simply exports all the files to a specified output directory and outputs a textual summary
-of the metadata associated with each file (load address, etc.). If a more sophisticated export is required, it is simple
-to call the <WavAcornFileSearch> class from an external script to perform other actions on the files found.
+By default, this script simply converts a WAV recording into UEF format, and exports all the files to a specified
+output directory, together with a textual summary of the metadata associated with each file (load address, etc.).
+If a more sophisticated export is required, it is simple to call the <WavAcornFileSearch> class from an external
+script to perform other actions on the files found.
 
-Limitations:
+Usage:
 
-* Any bit rate is supported, but >= 44.1kHz is recommended.
+* Any bit rate is supported, but >= 44.1kHz is recommended. Both mono and stereo recordings are accepted, but stereo
+is recommended, and the best channel will automatically be selected -- very often one channel is (much) less noisy
+than the other.
 
 * This script currently assumes 1200 baud, as used by almost all software. It would probably be simple to add support
-for the BBC Micro's 300 baud setting.
+for the BBC Micro's 300 baud setting, but the author has no suitable test data.
 
-* This script does not currently support Acorn Atom tapes (which use a different header format), though it would
-probably be simple to adapt it to do so.
+* This script does not currently support Acorn Atom tapes (which use a different header format). It would probably be
+simple to adapt it to do so, but the author has no suitable test data.
 
 References:
 
@@ -58,9 +63,10 @@ import re
 import sys
 
 from operator import itemgetter
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Tuple
 
 from constants import ascii
+from uef_file_builder import UefFileBuilder
 from wav_file_reader import WavFileReader
 
 
@@ -87,6 +93,10 @@ class WavAcornFileSearch:
         self.wav_file = WavFileReader(input_filename=self.input_filename,
                                       min_wave_amplitude_fraction=0.03)
 
+        # Place-holder for the list of data blocks extracted from this WAV file. This pulse list can be used to
+        # generate a UEF file, after called <search_wav_file>
+        self.best_block_list: List[Dict] = []
+
         # All the phase positions we use to count wave cycles
         # These represent counting downward zero crossings, wave peaks, upward zero crossings, and wave troughs.
         self.all_phases: Tuple = (0, 90, 180, 270)
@@ -111,13 +121,16 @@ class WavAcornFileSearch:
 
         # Build a dictionary of all the file objects we recover with each configuration
         files_recovered_by_config: Dict[int, List] = {}
+        blocks_recovered_by_config: Dict[int, List] = {}
 
         # Search for files at each phase in turn
         for config_id, (channel, phase) in enumerate(self.all_configs):
             logging.debug("Searching channel {:d} at phase {:d}".format(channel, phase))
             self.wav_file.select_channel(channel=channel)
             self.wav_file.apply_high_pass_filter(cutoff=250)  # Apply high-pass filter
-            files_recovered_by_config[config_id] = self.search_for_files(phase=phase)
+            x: tuple = self.search_for_files(phase=phase)
+            files_recovered_by_config[config_id] = x[0]
+            blocks_recovered_by_config[config_id] = x[1]
 
         # Add up total number of bytes recovered with each configuration
         bytes_by_config: Dict[int, int] = {}
@@ -128,7 +141,11 @@ class WavAcornFileSearch:
             bytes_by_config[config_id] = bytes_recovered
 
         # Merge the file lists we recovered with each configuration
-        sorted_config_ids: Sequence[int, int] = sorted(bytes_by_config.items(), key=itemgetter(1), reverse=True)
+        sorted_config_ids: List[Tuple[int, int]] = sorted(bytes_by_config.items(), key=itemgetter(1), reverse=True)
+
+        # Store the best list of data blocks - which we may use later to generate a UEF file using <self.write_uef_file>
+        best_config_id = sorted_config_ids[0][0]
+        self.best_block_list = blocks_recovered_by_config[best_config_id]
 
         # Build merged list of all the files we recovered with each configuration
         merged_file_list = []
@@ -260,7 +277,7 @@ class WavAcornFileSearch:
         self._write_debugging(pulse_list=categorised_pulse_list, bit_list=bit_list, byte_list=byte_list)
 
         # Return a list of the files we recovered
-        return file_list
+        return file_list, block_list
 
     def _categorise_pulse_list(self, pulse_list: List):
         """
@@ -468,7 +485,7 @@ class WavAcornFileSearch:
 
             # Create template data structure to describe the Acorn data block we have found
             block_info = {
-                'block_bytes': block_bytes,  # How many bytes of data?
+                'block_bytes': block_bytes,  # List of bytes of data, each described by a dictionary
                 'block_start_time': block_bytes[0]['time'],  # Start time of the block on the tape (sec)
                 'block_end_time': block_bytes[-1]['time'],  # End time of the block on the tape (sec)
                 'header_pos_start': 0,  # The byte position in the block where the block header starts
@@ -827,6 +844,44 @@ class WavAcornFileSearch:
         # Return output
         return output
 
+    def write_uef_file(self, filename: str):
+        """
+        Write a .uef file representation of the data we found, enabling this tape to be loaded into emulators.
+
+        :param filename:
+            Filename of the binary UEF file we should write
+        :return:
+            None
+        """
+
+        if len(self.best_block_list) == 0:
+            logging.info("Writing empty .uef file. Did you call <self.search_wav_file> first to parse the tape?")
+
+        # Build UEF file
+        uef_writer = UefFileBuilder()
+
+        # Add data blocks
+        current_time: float = 0  # seconds
+        for block in self.best_block_list:
+            # Add silence before block
+            gap: float = max(0.2, block['block_start_time'] - current_time)
+            if gap > 2.:
+                silence_duration = min(4., gap - 2)
+                uef_writer.add_silence(duration=silence_duration)
+
+            # Add header tone before block
+            header_duration = min(2., gap)
+            uef_writer.add_header_tone(duration=header_duration)
+
+            # Add contents of block
+            uef_writer.add_data_chunk(byte_list=block['block_bytes'])
+
+            # Update time
+            current_time = block['block_end_time']
+
+        # Write UEF file
+        uef_writer.write_to_file(filename=filename)
+
     @staticmethod
     def _write_debugging(pulse_list: List, bit_list: List, byte_list: List):
         """
@@ -870,7 +925,7 @@ if __name__ == "__main__":
     # Read input parameters
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input',
-                        default="/mnt/ganymede4/dcf21/cassette_archive/box01/box01_tape002a_acorn_eu_1992_april.wav",
+                        default="/tmp/box01_tape002a_acorn_eu_1992_april.wav",
                         type=str,
                         dest="input_filename",
                         help="Input WAV file to process")
@@ -879,6 +934,11 @@ if __name__ == "__main__":
                         type=str,
                         dest="output_directory",
                         help="Directory in which to put the extracted files")
+    parser.add_argument('--uef',
+                        default="/tmp/my_computer_tape.uef",
+                        type=str,
+                        dest="output_uef_file",
+                        help="Filename for UEF file containing the contents of the tape")
     parser.add_argument('--debug',
                         action='store_true',
                         dest="debug",
@@ -897,7 +957,7 @@ if __name__ == "__main__":
                         format='[%(asctime)s] %(levelname)s:%(filename)s:%(message)s',
                         datefmt='%d/%m/%Y %H:%M:%S')
     logger = logging.getLogger(__name__)
-    logger.debug(__doc__.strip())
+    # logger.debug(__doc__.strip())
 
     # Open input audio file
     processor = WavAcornFileSearch(input_filename=args.input_filename,
@@ -912,3 +972,7 @@ if __name__ == "__main__":
 
     # Extract the Acorn files we found to output
     processor.extract_files(file_list=file_list, output_dir=args.output_directory)
+
+    # Make UEF file
+    if args.output_uef_file:
+        processor.write_uef_file(filename=args.output_uef_file)

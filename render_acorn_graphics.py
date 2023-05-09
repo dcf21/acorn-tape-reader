@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # render_acorn_graphics.py
+# -*- coding: utf-8 -*-
+#
+# The Python script in this file contains an ASCII lookup table.
+#
+# Copyright (C) 2022-2023 Dominic Ford <https://dcford.org.uk/>
+#
+# This code is free software; you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation; either version 3 of the License, or (at your option) any later
+# version.
+#
+# You should have received a copy of the GNU General Public License along with
+# this file; if not, write to the Free Software Foundation, Inc., 51 Franklin
+# Street, Fifth Floor, Boston, MA  02110-1301, USA
+
+# ----------------------------------------------------------------------------
+
 
 """
 Render a graphical representation of files containing Acorn screen memory.
@@ -47,7 +63,7 @@ palettes: Dict[int, List[Tuple[int]]] = {
 }
 
 
-def render_acorn_graphics(filename: str, output: str, screen_mode: int):
+def render_acorn_graphics(filename: str, output: str, screen_mode: int, offset: int = 0):
     """
     Render Acorn screen memory
 
@@ -57,6 +73,8 @@ def render_acorn_graphics(filename: str, output: str, screen_mode: int):
         The filename of the graphical output
     :param screen_mode:
         The Acorn screen mode to simulate
+    :param offset:
+        The offset within the binary file to start rendering
     :return:
         None
     """
@@ -68,10 +86,10 @@ def render_acorn_graphics(filename: str, output: str, screen_mode: int):
         input_bytes = f.read()
 
     # Produce graphical output
-    create_image_from_bytes(byte_list=input_bytes, output=output, screen_mode=screen_mode)
+    create_image_from_bytes(byte_list=input_bytes, output=output, screen_mode=screen_mode, offset=offset)
 
 
-def create_image_from_bytes(byte_list: Iterable, output: str, screen_mode: int):
+def create_image_from_bytes(byte_list: Iterable, output: str, screen_mode: int, offset: int = 0):
     """
     Create a listing of a input file
 
@@ -81,9 +99,13 @@ def create_image_from_bytes(byte_list: Iterable, output: str, screen_mode: int):
         The filename of the graphical output
     :param screen_mode:
         The Acorn screen mode to simulate
+    :param offset:
+        The offset within the binary file to start rendering
     :return:
         None
     """
+
+    byte_list = byte_list[offset:]
 
     assert screen_mode in acorn_screen_modes
     mode_info = acorn_screen_modes[screen_mode]
@@ -151,7 +173,12 @@ if __name__ == "__main__":
                         type=int,
                         dest="mode",
                         help="The Acorn screen mode to simulate")
+    parser.add_argument('--offset',
+                        default=0,
+                        type=int,
+                        dest="offset",
+                        help="The offset position within the file to start rendering")
     args = parser.parse_args()
 
     # Render graphics
-    render_acorn_graphics(filename=args.input, output=args.output, screen_mode=args.mode)
+    render_acorn_graphics(filename=args.input, output=args.output, screen_mode=args.mode, offset=args.offset)
