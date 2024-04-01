@@ -7,7 +7,7 @@
 # Micro, Acorn Electron and BBC Master computers. It can also produce
 # UEF tape images for use in emulators such as BeebEm or JSBeeb.
 #
-# Copyright (C) 2022-2023 Dominic Ford <https://dcford.org.uk/>
+# Copyright (C) 2022-2024 Dominic Ford <https://dcford.org.uk/>
 #
 # This code is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -63,7 +63,7 @@ import re
 import sys
 
 from operator import itemgetter
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from constants import ascii
 from uef_file_builder import UefFileBuilder
@@ -75,7 +75,7 @@ class WavAcornFileSearch:
     Class to extract files from WAV recordings of tapes saved by 8-bit Acorn computers (e.g. the BBC Micro).
     """
 
-    def __init__(self, input_filename: str, relative_speed: float):
+    def __init__(self, input_filename: Optional[str], relative_speed: float):
         """
         Extract files from WAV recordings of tapes saved by 8-bit Acorn computers (e.g. the BBC Micro).
 
@@ -87,7 +87,7 @@ class WavAcornFileSearch:
         """
 
         # Input settings
-        self.input_filename: str = input_filename
+        self.input_filename: Optional[str] = input_filename
 
         # Open wav file
         self.wav_file = WavFileReader(input_filename=self.input_filename,
@@ -464,7 +464,8 @@ class WavAcornFileSearch:
         # Output list of blocks of bytes
         return byte_list
 
-    def _create_block_list(self, byte_list: List):
+    @staticmethod
+    def _create_block_list(byte_list: List):
         """
         Turn a stream of bytes recovered from the audio stream into a list of Acorn data blocks. An Acorn data block
         contains a header and up to 256 bytes of data.
@@ -536,17 +537,19 @@ class WavAcornFileSearch:
             # This assumes the header format used by the BBC Micro, also used by the Acorn Electron and BBC Master
             # If you want to read Acorn Atom tapes, you'll need to change these lines
             l = block_info['header_pos_load_addr']
-            block_info['load_addr'] = self._read_int_from_bytes(input=block_bytes, start=l, byte_count=4)
-            block_info['exec_addr'] = self._read_int_from_bytes(input=block_bytes, start=l + 4, byte_count=4)
-            block_info['block_number'] = self._read_int_from_bytes(input=block_bytes, start=l + 8, byte_count=2)
-            block_info['data_length'] = self._read_int_from_bytes(input=block_bytes, start=l + 10, byte_count=2)
-            block_info['block_flag'] = self._read_int_from_bytes(input=block_bytes, start=l + 12, byte_count=1)
-            block_info['next_addr'] = self._read_int_from_bytes(input=block_bytes, start=l + 13, byte_count=4)
-            block_info['header_crc'] = self._read_int_from_bytes(input=block_bytes, start=l + 17, byte_count=2)
+            read_int = WavAcornFileSearch._read_int_from_bytes
+            block_info['load_addr'] = read_int(input=block_bytes, start=l, byte_count=4)
+            block_info['exec_addr'] = read_int(input=block_bytes, start=l + 4, byte_count=4)
+            block_info['block_number'] = read_int(input=block_bytes, start=l + 8, byte_count=2)
+            block_info['data_length'] = read_int(input=block_bytes, start=l + 10, byte_count=2)
+            block_info['block_flag'] = read_int(input=block_bytes, start=l + 12, byte_count=1)
+            block_info['next_addr'] = read_int(input=block_bytes, start=l + 13, byte_count=4)
+            block_info['header_crc'] = read_int(input=block_bytes, start=l + 17, byte_count=2)
 
             # Check CRC (i.e. 16-bit checksum) of the block header
-            calculated_header_crc = self._calculate_crc(input=block_bytes, start=block_info['header_pos_start'],
-                                                        end=block_info['header_pos_end'] - 2)
+            calculated_header_crc = WavAcornFileSearch._calculate_crc(input=block_bytes,
+                                                                      start=block_info['header_pos_start'],
+                                                                      end=block_info['header_pos_end'] - 2)
             if calculated_header_crc != block_info['header_crc']:
                 block_info['error'] = "Header CRC fail: computed {:04X}; tape says {:04X}".format(
                     calculated_header_crc, block_info['header_crc'])
@@ -565,11 +568,12 @@ class WavAcornFileSearch:
             block_info['data_payload'] = block_bytes[block_info['data_pos_start']:block_info['data_pos_end']]
 
             # Check CRC (i.e. 16-bit checksum) of the data payload
-            block_info['data_crc'] = self._read_int_from_bytes(input=block_bytes,
-                                                               start=block_info['data_pos_end'],
-                                                               byte_count=2)
-            calculated_data_crc = self._calculate_crc(input=block_bytes, start=block_info['data_pos_start'],
-                                                      end=block_info['data_pos_end'])
+            block_info['data_crc'] = read_int(input=block_bytes,
+                                              start=block_info['data_pos_end'],
+                                              byte_count=2)
+            calculated_data_crc = WavAcornFileSearch._calculate_crc(input=block_bytes,
+                                                                    start=block_info['data_pos_start'],
+                                                                    end=block_info['data_pos_end'])
             if calculated_data_crc != block_info['data_crc']:
                 block_info['error'] = "Data CRC fail: computed {:04X}; tape says {:04X}".format(
                     calculated_data_crc, block_info['data_crc'])

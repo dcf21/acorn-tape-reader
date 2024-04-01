@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-# render_acorn_graphics.py
 # -*- coding: utf-8 -*-
+# render_acorn_graphics.py
 #
-# The Python script in this file contains an ASCII lookup table.
+# The Python script in this file renders a graphical representation of files
+# containing Acorn screen memory.
 #
-# Copyright (C) 2022-2023 Dominic Ford <https://dcford.org.uk/>
+# Copyright (C) 2022-2024 Dominic Ford <https://dcford.org.uk/>
 #
 # This code is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
