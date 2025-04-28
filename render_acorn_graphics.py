@@ -5,7 +5,7 @@
 # The Python script in this file renders a graphical representation of files
 # containing Acorn screen memory.
 #
-# Copyright (C) 2022-2024 Dominic Ford <https://dcford.org.uk/>
+# Copyright (C) 2022-2025 Dominic Ford <https://dcford.org.uk/>
 #
 # This code is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -29,10 +29,10 @@ import sys
 
 from math import ceil, floor
 from PIL import Image
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List, Tuple, Union
 
 # List of the BBC Micro's screen modes
-acorn_screen_modes: Dict[int, Dict] = {
+acorn_screen_modes: Dict[int, Dict[str, int]] = {
     0: {
         'width': 640,
         'bit_depth': 1
@@ -55,8 +55,8 @@ acorn_screen_modes: Dict[int, Dict] = {
     }
 }
 
-# Color palettes to use when drawing graphics in each mode
-palettes: Dict[int, List[Tuple[int]]] = {
+# Default colour palettes to use when drawing graphics in each mode
+palettes: Dict[int, List[Tuple[int, int, int]]] = {
     1: [(0, 0, 0), (255, 255, 255)],
     2: [(0, 0, 0), (255, 0, 0), (255, 255, 0), (255, 255, 255)],
     4: [(0, 0, 0), (255, 0, 0), (0, 255, 0), (255, 255, 0), (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
@@ -64,7 +64,7 @@ palettes: Dict[int, List[Tuple[int]]] = {
 }
 
 
-def render_acorn_graphics(filename: str, output: str, screen_mode: int, offset: int = 0):
+def render_acorn_graphics(filename: str, output: str, screen_mode: int, offset: int = 0) -> None:
     """
     Render Acorn screen memory
 
@@ -82,17 +82,17 @@ def render_acorn_graphics(filename: str, output: str, screen_mode: int, offset: 
 
     assert screen_mode in acorn_screen_modes
 
-    # Read input file
+    # Read the input file
     with open(filename, "rb") as f:
-        input_bytes = f.read()
+        input_bytes: bytes = f.read()
 
     # Produce graphical output
     create_image_from_bytes(byte_list=input_bytes, output=output, screen_mode=screen_mode, offset=offset)
 
 
-def create_image_from_bytes(byte_list: Iterable, output: str, screen_mode: int, offset: int = 0):
+def create_image_from_bytes(byte_list: Union[bytes, bytearray], output: str, screen_mode: int, offset: int = 0) -> None:
     """
-    Create a listing of a input file
+    Create a listing of an input file
 
     :param byte_list:
         The bytes of the input file
@@ -109,33 +109,41 @@ def create_image_from_bytes(byte_list: Iterable, output: str, screen_mode: int, 
     byte_list = byte_list[offset:]
 
     assert screen_mode in acorn_screen_modes
-    mode_info = acorn_screen_modes[screen_mode]
-    palette = palettes[mode_info['bit_depth']]
-    y_scaling = 2
+    mode_info: Dict[str, int] = acorn_screen_modes[screen_mode]
+    palette: List[Tuple[int, int, int]] = palettes[mode_info['bit_depth']]
+    y_scaling: int = 2
 
-    output_size_x = 640
+    output_size_x: int = 640
 
-    bytes_per_line = mode_info['width'] * mode_info['bit_depth']
+    bytes_per_line: int = mode_info['width'] * mode_info['bit_depth']
     line_count = ceil(len(byte_list) / bytes_per_line)
-    pixel_width = int(output_size_x / mode_info['width'])
+    pixel_width: int = int(output_size_x / mode_info['width'])
 
-    output_size_y = line_count * 8 * y_scaling
+    output_size_y: int = line_count * 8 * y_scaling
 
     # Create image
-    map_image = Image.new('RGB', (output_size_x, output_size_y), (0, 0, 0))
+    map_image: Image = Image.new('RGB', (output_size_x, output_size_y), (0, 0, 0))
 
     # Loop over input bytes
+    pos: int
+    byte: int
     for pos, byte in enumerate(byte_list):
-        pos_y = floor(pos / bytes_per_line) * 8 + (pos % 8)
-        pos_x_row = floor((pos % bytes_per_line) / 8)
-        pixels_per_byte = int(8 / mode_info['bit_depth'])
-        pos_x = int(pos_x_row * pixels_per_byte)
-        accumulators = [0] * pixels_per_byte
-        input_bits = int(byte)
+        pos_y: int = floor(pos / bytes_per_line) * 8 + (pos % 8)
+        pos_x_row: int = floor((pos % bytes_per_line) / 8)
+        pixels_per_byte: int = int(8 / mode_info['bit_depth'])
+        pos_x: int = int(pos_x_row * pixels_per_byte)
+        accumulators: List[int] = [0] * pixels_per_byte
+        input_bits: int = int(byte)
+
+        bit_number: int
         for bit_number in range(8):
-            bit_value = input_bits % 2
-            input_bits = floor(input_bits / 2)
+            bit_value: int = input_bits % 2
+            input_bits: int = floor(input_bits / 2)
             accumulators[bit_number % pixels_per_byte] += bit_value * pow(2, floor(bit_number / pixels_per_byte))
+
+        x_pixel: int
+        y_offset: int
+        x_offset: int
         for x_pixel in range(pixels_per_byte):
             for y_offset in range(y_scaling):
                 for x_offset in range(pixel_width):

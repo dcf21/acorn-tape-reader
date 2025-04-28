@@ -7,7 +7,7 @@
 # Micro, Acorn Electron and BBC Master computers. It can also produce
 # UEF tape images for use in emulators such as BeebEm or JSBeeb.
 #
-# Copyright (C) 2022-2024 Dominic Ford <https://dcford.org.uk/>
+# Copyright (C) 2022-2025 Dominic Ford <https://dcford.org.uk/>
 #
 # This code is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -63,7 +63,7 @@ import re
 import sys
 
 from operator import itemgetter
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from constants import ascii
 from uef_file_builder import UefFileBuilder
@@ -82,7 +82,7 @@ class WavAcornFileSearch:
         :param input_filename:
             Filename of the wav file to process
         :param relative_speed:
-            Assume tape runs at given fraction of normal speed (0.95 speeds up tape by 5%)
+            Assume tape runs at a given fraction of normal speed (0.95 speeds up tape by 5%)
         :return:
         """
 
@@ -90,8 +90,8 @@ class WavAcornFileSearch:
         self.input_filename: Optional[str] = input_filename
 
         # Open wav file
-        self.wav_file = WavFileReader(input_filename=self.input_filename,
-                                      min_wave_amplitude_fraction=0.03)
+        self.wav_file: WavFileReader = WavFileReader(input_filename=self.input_filename,
+                                                     min_wave_amplitude_fraction=0.03)
 
         # Place-holder for the list of data blocks extracted from this WAV file. This pulse list can be used to
         # generate a UEF file, after called <search_wav_file>
@@ -106,12 +106,20 @@ class WavAcornFileSearch:
                                                                          self.all_phases))
 
         # Set search settings
-        self.frequency_max_variance = 0.25  # Maximum fractional variance of tone frequencies from 1200/2400 Hz
-        self.relative_speed = relative_speed  # User's estimated relative speed of tape to nominal
-        self.header_frequency = 2400 * relative_speed  # Hz
-        self.header_period_cycles = self.wav_file.sampling_frequency / self.header_frequency  # samples per header cycle
 
-    def search_wav_file(self):
+        # Maximum fractional variance of tone frequencies from 1200/2400 Hz
+        self.frequency_max_variance: float = 0.25
+
+        # User's estimated relative speed of tape to nominal
+        self.relative_speed: float = relative_speed
+
+        # Header tone frequency / Hz
+        self.header_frequency: float = 2400 * relative_speed
+
+        # samples per header cycle
+        self.header_period_cycles: float = self.wav_file.sampling_frequency / self.header_frequency
+
+    def search_wav_file(self) -> List[dict]:
         """
         Main entry point for searching for files from a wav recording of an Acorn computer tape.
 
@@ -120,10 +128,13 @@ class WavAcornFileSearch:
         """
 
         # Build a dictionary of all the file objects we recover with each configuration
-        files_recovered_by_config: Dict[int, List] = {}
-        blocks_recovered_by_config: Dict[int, List] = {}
+        files_recovered_by_config: Dict[int, List[dict]] = {}
+        blocks_recovered_by_config: Dict[int, List[dict]] = {}
 
         # Search for files at each phase in turn
+        config_id: int
+        channel: int
+        phase: int
         for config_id, (channel, phase) in enumerate(self.all_configs):
             logging.debug("Searching channel {:d} at phase {:d}".format(channel, phase))
             self.wav_file.select_channel(channel=channel)
@@ -132,7 +143,7 @@ class WavAcornFileSearch:
             files_recovered_by_config[config_id] = x[0]
             blocks_recovered_by_config[config_id] = x[1]
 
-        # Add up total number of bytes recovered with each configuration
+        # Add up the total number of bytes recovered with each configuration
         bytes_by_config: Dict[int, int] = {}
         for config_id in range(len(self.all_configs)):
             bytes_recovered: int = 0
@@ -144,14 +155,18 @@ class WavAcornFileSearch:
         sorted_config_ids: List[Tuple[int, int]] = sorted(bytes_by_config.items(), key=itemgetter(1), reverse=True)
 
         # Store the best list of data blocks - which we may use later to generate a UEF file using <self.write_uef_file>
-        best_config_id = sorted_config_ids[0][0]
+        best_config_id: int = sorted_config_ids[0][0]
         self.best_block_list = blocks_recovered_by_config[best_config_id]
 
-        # Build merged list of all the files we recovered with each configuration
-        merged_file_list = []
-        timing_margin = 0.25  # maximum allowed mismatch between time position of a file seen at different phases (sec)
+        # Build a merged list of all the files we recovered with each configuration
+        merged_file_list: List[dict] = []
+
+        # maximum allowed mismatch between time position of a file seen at different phases (sec)
+        timing_margin: float = 0.25
 
         # Loop over all configurations
+        config_id: int
+        file: dict
         for config_id in [item[0] for item in sorted_config_ids]:
             # Loop over all files recovered with each configuration
             for file in files_recovered_by_config[config_id]:
@@ -159,12 +174,14 @@ class WavAcornFileSearch:
                 if file['filename'] is None:
                     continue
                 # Fetch the start and end time of the file on the tape
-                time_start = file['start_time']
-                time_end = file['final_block']['block_end_time']
+                time_start: float = file['start_time']
+                time_end: float = file['final_block']['block_end_time']
 
-                # Check if file has already been recovered at a previous config setting
-                file_matches_index = None
-                action = None
+                # Check if the file has already been recovered at a previous config setting
+                file_matches_index: Optional[int] = None
+                action: Optional[str] = None
+                existing_file_index: int
+                existing_file: dict
                 for existing_file_index, existing_file in enumerate(merged_file_list):
                     # ... to match, the filename must be the same
                     if existing_file['filename'] != file['filename']:
@@ -216,13 +233,13 @@ class WavAcornFileSearch:
                     file['config_ids'] = config_ids
                     merged_file_list[file_matches_index] = file
 
-        # Sort list of the files we found by start time, to create chronological index of the tape
+        # Sort the list of the files we found by start time, to create chronological index of the tape
         merged_file_list.sort(key=itemgetter('start_time'))
 
         # Return a list of all the file objects we recovered
         return merged_file_list
 
-    def search_for_files(self, phase: int):
+    def search_for_files(self, phase: int) -> Tuple[List[dict], List[dict]]:
         """
         Search for files in a WAV audio stream, by counting wave cycles at a particular phase position in the wave
         cycle. Different tapes load better at different phase positions, due to the differing analogue audio
@@ -230,48 +247,48 @@ class WavAcornFileSearch:
         recovered, it is best to try all possibilities in turn.
 
         :return:
-            List of file objects
+            Tuple containing [List of file objects, List of data blocks]
         """
 
         # Check we're searching at a valid phase position
         assert phase in self.all_phases
 
-        # Fetch list of wave cycles in the wav audio stream, measuring the start of each cycle at one of four
+        # Fetch a list of wave cycles in the wav audio stream, measuring the start of each cycle at one of four
         # phase positions
         if phase == 0:
             wave_cycle_times = self.wav_file.fetch_zero_crossing_times(invert_wave=False)
         elif phase == 180:
             wave_cycle_times = self.wav_file.fetch_zero_crossing_times(invert_wave=True)
         elif phase == 90:
-            wave_cycle_times = self.wav_file.fetch_wave_peak_times(bracket_window=self.header_period_cycles,
+            wave_cycle_times = self.wav_file.fetch_wave_peak_times(bracket_window=int(self.header_period_cycles),
                                                                    invert_wave=False)
         else:
-            wave_cycle_times = self.wav_file.fetch_wave_peak_times(bracket_window=self.header_period_cycles,
+            wave_cycle_times = self.wav_file.fetch_wave_peak_times(bracket_window=int(self.header_period_cycles),
                                                                    invert_wave=True)
 
-        # Make list of pulse times and lengths
+        # Make a list of pulse times and lengths
         # A pulse is defined as the time interval spanned by a single wave cycle
-        pulse_list = self.wav_file.fetch_pulse_list(input_events=wave_cycle_times)
+        pulse_list: List[dict] = self.wav_file.fetch_pulse_list(input_events=wave_cycle_times)
 
         # Assign a pulse type to each pulse - does it look like 2400 Hz or 1200 Hz, or something else?
-        categorised_pulse_list = self._categorise_pulse_list(pulse_list=pulse_list)
+        categorised_pulse_list: List[dict] = self._categorise_pulse_list(pulse_list=pulse_list)
 
         # Extract bits from stream of pulses
         # Ones are represented by two cycles at 2400 Hz; zeros are a single 1200 Hz cycle
-        bit_list = self._parse_pulse_list(pulse_list=categorised_pulse_list)
+        bit_list: List[dict] = self._parse_pulse_list(pulse_list=categorised_pulse_list)
 
         # Extract bytes from stream of bits
         # Each byte comprises 10 bits: 0xxxxxxxx1
-        byte_list = self._parse_bit_list(bit_list=bit_list)
+        byte_list: List[List[dict]] = self._parse_bit_list(bit_list=bit_list)
 
         # Extract data blocks (header plus up to 256 bytes) from streams of bytes
-        block_list = self._create_block_list(byte_list=byte_list)
+        block_list: List[dict] = self._create_block_list(byte_list=byte_list)
 
         # Display a summary of all the blocks of data we found on the tape
         # self._summarise_blocks(block_list=block_list)
 
         # Extract a list of the files on the tape, assembling blocks together
-        file_list = self._assemble_files_from_blocks(block_list=block_list)
+        file_list: List[dict] = self._assemble_files_from_blocks(block_list=block_list)
 
         # Write debugging output
         self._write_debugging(pulse_list=categorised_pulse_list, bit_list=bit_list, byte_list=byte_list)
@@ -279,7 +296,7 @@ class WavAcornFileSearch:
         # Return a list of the files we recovered
         return file_list, block_list
 
-    def _categorise_pulse_list(self, pulse_list: List):
+    def _categorise_pulse_list(self, pulse_list: List[dict]) -> List[dict]:
         """
         Populate the list of pulses (i.e. wave cycles) in the audio stream, determining whether they seem to be at
         2400 Hz (two cycle of which encodes a binary 1), or at 1200 Hz (which encodes a binary 0).
@@ -291,20 +308,20 @@ class WavAcornFileSearch:
         """
 
         # Minimum duration of a pulse which we categorise as a binary 0 (i.e. 1200 Hz ish)
-        min_0 = 1.0 / (self.header_frequency / 2) / (1 + self.frequency_max_variance)
+        min_0: float = 1.0 / (self.header_frequency / 2) / (1 + self.frequency_max_variance)
 
         # Maximum duration of a pulse which we categorise as a binary 0 (i.e. 1200 Hz ish)
-        max_0 = 1.0 / (self.header_frequency / 2) * (1 + self.frequency_max_variance)
+        max_0: float = 1.0 / (self.header_frequency / 2) * (1 + self.frequency_max_variance)
 
         # Minimum duration of a pulse which we categorise as a binary 1 (i.e. 2400 Hz ish)
-        min_1 = 1.0 / self.header_frequency / (1 + self.frequency_max_variance)
+        min_1: float = 1.0 / self.header_frequency / (1 + self.frequency_max_variance)
 
         # Maximum duration of a pulse which we categorise as a binary 1 (i.e. 2400 Hz ish)
-        max_1 = 1.0 / self.header_frequency * (1 + self.frequency_max_variance)
+        max_1: float = 1.0 / self.header_frequency * (1 + self.frequency_max_variance)
 
         # Categorise pulses as 0s, 1s, or intermediate length
-        # Intermediate length pulses can arise when frequency shifts mid-cycle
-        pulse_types = {
+        # Intermediate-length pulses can arise when frequency shifts mid-cycle
+        pulse_types: Dict[str, Dict[str, float]] = {
             '1': {
                 'min': min_1,
                 'max': max_1
@@ -320,12 +337,14 @@ class WavAcornFileSearch:
         }
 
         # Build a histogram of the number of pulses of each type
-        pulse_type_histogram = {'?': 0, '0': 0, 'i': 0, '1': 0}
+        pulse_type_histogram: Dict[str, int] = {'?': 0, '0': 0, 'i': 0, '1': 0}
 
         # Assign a pulse type categorisation to each wave cycle
+        index: int
+        item: dict
         for index, item in enumerate(pulse_list):
-            pulse_length = item['length_sec']
-            pulse_type = '?'
+            pulse_length: float = item['length_sec']
+            pulse_type: str = '?'
             for candidate_pulse_type, candidate_pulse_spec in pulse_types.items():
                 if candidate_pulse_spec['min'] <= pulse_length <= candidate_pulse_spec['max']:
                     pulse_type = candidate_pulse_type
@@ -333,14 +352,14 @@ class WavAcornFileSearch:
             item['type'] = pulse_type
             pulse_type_histogram[pulse_type] += 1
 
-        # Log histogram of types of pulse
+        # Log histogram of the types of pulse
         logging.debug("Pulse type histogram: {}".format(repr(pulse_type_histogram)))
 
-        # Return pulse list
+        # Return pulse list with categorisation field added
         return pulse_list
 
     @staticmethod
-    def _parse_pulse_list(pulse_list: List):
+    def _parse_pulse_list(pulse_list: List[dict]) -> List[dict]:
         """
         Turn a list of categorised pulses (i.e. wave cycles), into a stream of data bits.
 
@@ -354,21 +373,21 @@ class WavAcornFileSearch:
             A dictionary describing a stream of bits
         """
         # Extract bits from stream of pulses (i.e. wave cycles)
-        position = 0  # Position counter in the input stream of pulses
-        bit_list = []  # List of bits we've extracted
-        last_bit = '1'  # The last type of bit we extracted (helps decide what to do with intermediate-length pulses)
-        sequence_length = 0  # How many identical bits have we encountered in a row?
-        long_sequence = False  # If we record a very long string of 1s, we've probably found a header tone
+        position: int = 0  # Position counter in the input stream of pulses
+        bit_list: List[dict] = []  # List of bits we've extracted
+        last_bit: str = '1'  # The last type of bit we extracted (helps decide handling of intermediate-length pulses)
+        sequence_length: int = 0  # How many identical bits have we encountered in a row?
+        long_sequence: bool = False  # If we record a very long string of 1s, we've probably found a header tone
 
         # Cycle through the pulses we extracted from the audio stream
         while position < len(pulse_list) - 2:
             # Process pulse sequence
-            pulse_time = pulse_list[position]['time']
+            pulse_time: float = pulse_list[position]['time']
 
             # Create a string describing the next three pulses
-            pulse_sequence = "{}{}{}".format(pulse_list[position]['type'],
-                                             pulse_list[position + 1]['type'],
-                                             pulse_list[position + 2]['type'])
+            pulse_sequence: str = "{}{}{}".format(pulse_list[position]['type'],
+                                                  pulse_list[position + 1]['type'],
+                                                  pulse_list[position + 2]['type'])
 
             # Skip over very long sequences (more than 20 wave cycles) of identical bits
             # These are probably a header tone. They never arise in real data, as all bytes are prefixed with a zero
@@ -380,8 +399,8 @@ class WavAcornFileSearch:
 
             # Infer most likely next bit based on previous bit and the next few wave cycles
             if long_sequence and pulse_sequence[0] in (1, 'i'):
-                new_bit = '1'
-                advance_by = 1
+                new_bit: str = '1'
+                advance_by: int = 1
             elif pulse_sequence[0] == '0':
                 new_bit = '0'
                 advance_by = 1
@@ -410,14 +429,14 @@ class WavAcornFileSearch:
                 'bit': new_bit
             })
 
-            # Move to next sample
+            # Move to the next sample
             position += advance_by
 
         # Output list of the bits we found
         return bit_list
 
     @staticmethod
-    def _parse_bit_list(bit_list: List):
+    def _parse_bit_list(bit_list: List[dict]) -> List[List[Dict]]:
         """
         Take a list of the binary bits we found on the tape, into decode them into a stream of bytes. We look for
         strings of eight bits, with a zero beforehand and a one afterwards: <0xxxxxxxx1>. This is how Acorn
@@ -430,9 +449,9 @@ class WavAcornFileSearch:
             was lost.
         """
         # Extract bytes from stream of bits
-        position = 0  # Position counter in the input stream of bits recovered from the audio stream
-        synchronised = False  # Have we synchronised to a stream of bytes encoded as <0xxxxxxxx1>?
-        bit_count = len(bit_list)  # How many binary bits did we find in the audio stream?
+        position: int = 0  # Position counter in the input stream of bits recovered from the audio stream
+        synchronised: bool = False  # Have we synchronised to a stream of bytes encoded as <0xxxxxxxx1>?
+        bit_count: int = len(bit_list)  # How many binary bits did we find in the audio stream?
         byte_list: List[List[Dict]] = []  # A list of blocks of bytes. We start a new block whenever we lose sync.
 
         # Now turn stream of bits into a stream of bytes
@@ -443,7 +462,8 @@ class WavAcornFileSearch:
                     ('?' not in [i['bit'] for i in bit_list[position + 1:position + 9]])
             ):
                 # If yes, then extract the value of this byte, in the range 0-255
-                byte_value = sum([int(i['bit']) * pow(2, c) for c, i in enumerate(bit_list[position + 1:position + 9])])
+                byte_value: int = sum([int(i['bit']) * pow(2, c)
+                                       for c, i in enumerate(bit_list[position + 1:position + 9])])
 
                 # If we weren't previously synchronised, then we are now! Start a new block
                 if not synchronised:
@@ -465,7 +485,7 @@ class WavAcornFileSearch:
         return byte_list
 
     @staticmethod
-    def _create_block_list(byte_list: List):
+    def _create_block_list(byte_list: List[List[Dict]]) -> List[dict]:
         """
         Turn a stream of bytes recovered from the audio stream into a list of Acorn data blocks. An Acorn data block
         contains a header and up to 256 bytes of data.
@@ -475,17 +495,18 @@ class WavAcornFileSearch:
         :return:
             A dictionary describing the Acorn data blocks that we recovered
         """
-        # Create list of Acorn data blocks
-        block_list = []
+        # Create a list of Acorn data blocks
+        block_list: List[dict] = []
 
         # Loop over each contiguous block of bytes we recovered
+        block_bytes: List[dict]
         for block_bytes in byte_list:
             # Check this block has at least some bytes
             if len(block_bytes) < 3:
                 continue
 
             # Create template data structure to describe the Acorn data block we have found
-            block_info = {
+            block_info: dict = {
                 'block_bytes': block_bytes,  # List of bytes of data, each described by a dictionary
                 'block_start_time': block_bytes[0]['time'],  # Start time of the block on the tape (sec)
                 'block_end_time': block_bytes[-1]['time'],  # End time of the block on the tape (sec)
@@ -517,6 +538,7 @@ class WavAcornFileSearch:
                 continue
 
             # Extract filename from the header
+            char_byte: int
             for char_byte in [block_bytes[i]['byte'] for i in range(1, 12)]:
                 if char_byte == 0:
                     break
@@ -536,20 +558,20 @@ class WavAcornFileSearch:
             # Read all the fields from the header
             # This assumes the header format used by the BBC Micro, also used by the Acorn Electron and BBC Master
             # If you want to read Acorn Atom tapes, you'll need to change these lines
-            l = block_info['header_pos_load_addr']
-            read_int = WavAcornFileSearch._read_int_from_bytes
-            block_info['load_addr'] = read_int(input=block_bytes, start=l, byte_count=4)
-            block_info['exec_addr'] = read_int(input=block_bytes, start=l + 4, byte_count=4)
-            block_info['block_number'] = read_int(input=block_bytes, start=l + 8, byte_count=2)
-            block_info['data_length'] = read_int(input=block_bytes, start=l + 10, byte_count=2)
-            block_info['block_flag'] = read_int(input=block_bytes, start=l + 12, byte_count=1)
-            block_info['next_addr'] = read_int(input=block_bytes, start=l + 13, byte_count=4)
-            block_info['header_crc'] = read_int(input=block_bytes, start=l + 17, byte_count=2)
+            l: int = block_info['header_pos_load_addr']
+            read_int: Callable = WavAcornFileSearch._read_int_from_bytes
+            block_info['load_addr'] = read_int(input_bytes=block_bytes, start=l, byte_count=4)
+            block_info['exec_addr'] = read_int(input_bytes=block_bytes, start=l + 4, byte_count=4)
+            block_info['block_number'] = read_int(input_bytes=block_bytes, start=l + 8, byte_count=2)
+            block_info['data_length'] = read_int(input_bytes=block_bytes, start=l + 10, byte_count=2)
+            block_info['block_flag'] = read_int(input_bytes=block_bytes, start=l + 12, byte_count=1)
+            block_info['next_addr'] = read_int(input_bytes=block_bytes, start=l + 13, byte_count=4)
+            block_info['header_crc'] = read_int(input_bytes=block_bytes, start=l + 17, byte_count=2)
 
             # Check CRC (i.e. 16-bit checksum) of the block header
-            calculated_header_crc = WavAcornFileSearch._calculate_crc(input=block_bytes,
-                                                                      start=block_info['header_pos_start'],
-                                                                      end=block_info['header_pos_end'] - 2)
+            calculated_header_crc: int = WavAcornFileSearch._calculate_crc(input_bytes=block_bytes,
+                                                                           start=block_info['header_pos_start'],
+                                                                           end=block_info['header_pos_end'] - 2)
             if calculated_header_crc != block_info['header_crc']:
                 block_info['error'] = "Header CRC fail: computed {:04X}; tape says {:04X}".format(
                     calculated_header_crc, block_info['header_crc'])
@@ -568,12 +590,12 @@ class WavAcornFileSearch:
             block_info['data_payload'] = block_bytes[block_info['data_pos_start']:block_info['data_pos_end']]
 
             # Check CRC (i.e. 16-bit checksum) of the data payload
-            block_info['data_crc'] = read_int(input=block_bytes,
+            block_info['data_crc'] = read_int(input_bytes=block_bytes,
                                               start=block_info['data_pos_end'],
                                               byte_count=2)
-            calculated_data_crc = WavAcornFileSearch._calculate_crc(input=block_bytes,
-                                                                    start=block_info['data_pos_start'],
-                                                                    end=block_info['data_pos_end'])
+            calculated_data_crc: int = WavAcornFileSearch._calculate_crc(input_bytes=block_bytes,
+                                                                         start=block_info['data_pos_start'],
+                                                                         end=block_info['data_pos_end'])
             if calculated_data_crc != block_info['data_crc']:
                 block_info['error'] = "Data CRC fail: computed {:04X}; tape says {:04X}".format(
                     calculated_data_crc, block_info['data_crc'])
@@ -583,11 +605,11 @@ class WavAcornFileSearch:
         return block_list
 
     @staticmethod
-    def _read_int_from_bytes(input, start, byte_count):
+    def _read_int_from_bytes(input_bytes: List[dict], start: int, byte_count: int) -> int:
         """
         Read an unsigned integer from a stream of bytes, with the least significant byte stored first.
 
-        :param input:
+        :param input_bytes:
             The input stream of bytes (each being stored as a dictionary, with the byte value stored with the key
             'byte')
         :param start:
@@ -599,14 +621,14 @@ class WavAcornFileSearch:
         """
 
         return sum([i['byte'] * pow(256, c) for c, i in
-                    enumerate(input[start:start + byte_count])])
+                    enumerate(input_bytes[start:start + byte_count])])
 
     @staticmethod
-    def _calculate_crc(input, start, end):
+    def _calculate_crc(input_bytes: List[dict], start: int, end: int) -> int:
         """
         Calculate a 16-bit CRC (i.e. checksum used on Acorn tapes) for a string of bytes.
 
-        :param input:
+        :param input_bytes:
             The input stream of bytes
         :param start:
             The position of the first byte to checksum
@@ -617,11 +639,11 @@ class WavAcornFileSearch:
         """
 
         # Initialise the cyclic-redundancy check
-        crc = 0
-        poly = 0x1021
+        crc: int = 0
+        poly: int = 0x1021
 
         # Loop over bytes
-        for byte in input[start:end]:
+        for byte in input_bytes[start:end]:
             crc = crc ^ (byte['byte'] << 8)  # Fetch byte from memory, XOR into CRC top byte
             for i in range(8):  # Prepare to rotate 8 bits
                 crc = crc << 1  # rotate
@@ -634,7 +656,7 @@ class WavAcornFileSearch:
         return crc  # Return updated CRC
 
     @staticmethod
-    def summarise_blocks(block_list: List):
+    def summarise_blocks(block_list: List[dict]) -> None:
         """
         Display human-readable summary information about the Acorn data blocks we found on the tape.
 
@@ -644,6 +666,7 @@ class WavAcornFileSearch:
             None
         """
 
+        block: dict
         for block in block_list:
             logging.info("[{:10.5f}] [{:50s}] [{:10s}] {:04X} {:04X} {:02X} {:08X} {:08X} {:08X}".format(
                 block['block_start_time'], block['error'], block['filename'],
@@ -652,7 +675,7 @@ class WavAcornFileSearch:
             ))
 
     @staticmethod
-    def _assemble_files_from_blocks(block_list: List):
+    def _assemble_files_from_blocks(block_list: List[dict]) -> List[dict]:
         """
         Extract a list of the files we found on the tape, assembling together all the contiguous streams of Acorn
         data blocks which have the same filename and consecutive block numbers.
@@ -660,14 +683,14 @@ class WavAcornFileSearch:
         :param block_list:
             The list of Acorn block descriptors we found on the tape
         :return:
-            None
+            List of dictionaries describing the files we have found
         """
 
         # Start compiling a list of all the files we found on the tape
-        output = []
+        output: List[dict] = []
 
         # Dictionary used to describe each file we find on the tape
-        blank_file_descriptor = {
+        blank_file_descriptor: dict = {
             'filename': None,
             'data': [],
             'start_time': None,
@@ -683,27 +706,29 @@ class WavAcornFileSearch:
         }
 
         # Start off with a null descriptor that we use to describe the file we're currently reading
-        current_file_info = copy.deepcopy(blank_file_descriptor)
+        current_file_info: dict = copy.deepcopy(blank_file_descriptor)
 
         # At the end of reading each file, check through the blocks we found and write a status message about
         # whether the file was read successfully, and in its entirety
         def populate_current_file_status_message():
             if current_file_info['filename'] is not None:
                 # Bit 7 of the "block flag" byte should be set in the header of the final block of a file
-                final_block_flag = current_file_info['final_block']['block_flag'] & 0x80
+                final_block_flag: int = current_file_info['final_block']['block_flag'] & 0x80
 
                 # A file is deemed OK if the first block is 00, the last block is flagged, and no blocks are missing
-                is_ok = ((not current_file_info['missed_blocks']) and (not current_file_info['error_blocks']) and
-                         (current_file_info['first_block']['block_number'] == 0) and final_block_flag)
+                is_ok: bool = ((not current_file_info['missed_blocks']) and
+                               (not current_file_info['error_blocks']) and
+                               (current_file_info['first_block']['block_number'] == 0) and
+                               final_block_flag)
 
                 # Start writing a status message for this file
-                message = ""
+                message: str = ""
                 # Case 1: partial file with beginning and end missing
                 if (current_file_info['first_block']['block_number'] > 0) and not final_block_flag:
                     message += " Blocks {:04X} - {:04X} only.".format(current_file_info['first_block']['block_number'],
                                                                       current_file_info['final_block']['block_number'])
                 # Case 2: partial file with beginning missing
-                elif (current_file_info['first_block']['block_number'] > 0):
+                elif current_file_info['first_block']['block_number'] > 0:
                     message += " From block {:04X} only.".format(current_file_info['first_block']['block_number'])
                 # Case 3: partial file with the end missing
                 elif not final_block_flag:
@@ -712,7 +737,7 @@ class WavAcornFileSearch:
                 else:
                     message += " Last block {:04X} complete.".format(current_file_info['final_block']['block_number'])
 
-                # Add report on any missing blocks
+                # Add a report on any missing blocks
                 if current_file_info['missed_blocks']:
                     message += " Missing blocks {}.".format(" ".join(["{:02X}".format(i)
                                                                       for i in current_file_info['missed_blocks']]))
@@ -727,14 +752,15 @@ class WavAcornFileSearch:
 
         # Start searching the tape for files
         # Iterate through each data block we found on the tape in turn
+        block: dict
         for block in block_list:
             # If this block has a different filename from previous file, then finish reading old file and start new one
             if (block['filename'] != current_file_info['filename']) and not block['error']:
-                # Finish reading old file
+                # Finish reading the old file
                 populate_current_file_status_message()
                 output.append(current_file_info)
                 # Create a new file descriptor and populate it with new file's information
-                current_file_info = copy.deepcopy(blank_file_descriptor)
+                current_file_info: dict = copy.deepcopy(blank_file_descriptor)
                 current_file_info['filename'] = block['filename']
                 current_file_info['data'].extend([i['byte'] for i in block['data_payload']])
                 current_file_info['start_time'] = block['block_start_time']
@@ -761,6 +787,7 @@ class WavAcornFileSearch:
                 populate_current_file_status_message()
                 output.append(current_file_info)
                 current_file_info = copy.deepcopy(blank_file_descriptor)
+
         # When we've finished the tape, if we have a partially read file buffered in <current_file_info>, add that to
         # our output now
         populate_current_file_status_message()
@@ -770,7 +797,7 @@ class WavAcornFileSearch:
         return output
 
     @staticmethod
-    def extract_files(file_list: List, output_dir: str):
+    def extract_files(file_list: List[dict], output_dir: str) -> None:
         """
         Write the contents of all the files we extracted from the tape into a user-supplied output directory.
 
@@ -782,37 +809,41 @@ class WavAcornFileSearch:
             None
         """
 
-        # Make sure output directory exists
+        # Make sure the output directory exists
         os.makedirs(output_dir, exist_ok=True)
 
         # Extract each file in turn
+        index: int
+        item: dict
         for index, item in enumerate(file_list):
             # Create a safe version of the filename, with illegal characters removed, and /s turned into \s
             # Also append an index to the start of the filename, since tapes commonly have multiple files with the
             # same name
-            filename_safe = ("{:02d}_".format(index) +
-                             re.sub('/', r'\\', item['filename'].encode('utf-8', errors='replace').decode('utf-8')))
+            filename_safe: str = ("{:02d}_".format(index) +
+                                  re.sub('/', r'\\',
+                                         item['filename'].encode('utf-8', errors='replace').decode('utf-8'))
+                                  )
 
-            # Turn dots into "_dot_", since we can't save files called . or ..
-            output_file = re.sub(r'\.', '_dot_', os.path.join(output_dir, filename_safe))
+            # Turn dots into "_dot_", since we can't save files called "." or ".."
+            output_file: str = re.sub(r'\.', '_dot_', os.path.join(output_dir, filename_safe))
 
-            # Create file
+            # Create a copy of the file we read
             with open(output_file, "wb") as file_handle:
-                new_file_byte_array = bytearray(item['data'])
+                new_file_byte_array: bytearray = bytearray(item['data'])
                 file_handle.write(new_file_byte_array)
 
-    def summarise_files(self, file_list: List):
+    def summarise_files(self, file_list: List[dict]) -> str:
         """
         Display summary information about the files we found on the tape.
 
         :param file_list:
             The list of files we found on the tape
         :return:
-            None
+            String description of the files we found
         """
 
         # Start building output
-        output = ""
+        output: str = ""
 
         # Print column headings
         output += "[{:10s}] [{:10s}] [{:5s}] [{:10s}] {:4s} {:8s} {:8s} {:8s} {:10s} {:s}\n".format(
@@ -821,10 +852,11 @@ class WavAcornFileSearch:
         )
 
         # Print information about each file in turn
+        file_info: dict
         for file_info in file_list:
             if file_info['filename'] is not None:
                 # Make an indication of which configurations recovered this file
-                config_indicator = ""
+                config_indicator: str = ""
                 for config_id in range(len(self.all_configs)):
                     if config_id in file_info['config_ids']:
                         config_indicator += "ABCDEFGH"[config_id]
@@ -848,7 +880,7 @@ class WavAcornFileSearch:
         # Return output
         return output
 
-    def write_uef_file(self, filename: str):
+    def write_uef_file(self, filename: str) -> None:
         """
         Write a .uef file representation of the data we found, enabling this tape to be loaded into emulators.
 
@@ -862,7 +894,7 @@ class WavAcornFileSearch:
             logging.info("Writing empty .uef file. Did you call <self.search_wav_file> first to parse the tape?")
 
         # Build UEF file
-        uef_writer = UefFileBuilder()
+        uef_writer: UefFileBuilder = UefFileBuilder()
 
         # Add data blocks
         current_time: float = 0  # seconds
@@ -874,7 +906,7 @@ class WavAcornFileSearch:
                 uef_writer.add_silence(duration=silence_duration)
 
             # Add header tone before block
-            header_duration = min(2., gap)
+            header_duration: float = min(2., gap)
             uef_writer.add_header_tone(duration=header_duration)
 
             # Add contents of block
@@ -887,7 +919,7 @@ class WavAcornFileSearch:
         uef_writer.write_to_file(filename=filename)
 
     @staticmethod
-    def _write_debugging(pulse_list: List, bit_list: List, byte_list: List):
+    def _write_debugging(pulse_list: List[dict], bit_list: List[dict], byte_list: List[List[dict]]) -> None:
         """
         Write debugging files to </tmp> describing the analysis of this wav file.
 
@@ -903,6 +935,7 @@ class WavAcornFileSearch:
         # Output a list of all the raw pulses we found on the tape
         with open('/tmp/acorn_pulse_lengths.txt', 'wt') as f:
             f.write("# {:8s} {:10s} {}\n".format("Time/sec", "Length/ms", "Bit_type"))
+            item: dict
             for item in pulse_list:
                 f.write("{:10.5f} {:10.5f} {}\n".format(item['time'], item['length_sec'] * 1e3, item['type']))
 
@@ -915,7 +948,10 @@ class WavAcornFileSearch:
 
         # Output a list of all the raw bytes we found on the tape
         with open('/tmp/acorn_bytes.txt', 'wt') as f:
+            block: List[dict]
             for block in byte_list:
+                position: int
+                byte: dict
                 for position, byte in enumerate(block):
                     byte_time = byte['time']
                     byte_value = byte['byte']
@@ -964,14 +1000,14 @@ if __name__ == "__main__":
     # logger.debug(__doc__.strip())
 
     # Open input audio file
-    processor = WavAcornFileSearch(input_filename=args.input_filename,
-                                   relative_speed=args.relative_speed)
+    processor: WavAcornFileSearch = WavAcornFileSearch(input_filename=args.input_filename,
+                                                       relative_speed=args.relative_speed)
 
     # Search for Acorn files
-    file_list = processor.search_wav_file()
+    file_list: List[dict] = processor.search_wav_file()
 
     # Print a summary of the files we found
-    file_summary = processor.summarise_files(file_list=file_list)
+    file_summary: str = processor.summarise_files(file_list=file_list)
     logging.info(file_summary)
 
     # Extract the Acorn files we found to output

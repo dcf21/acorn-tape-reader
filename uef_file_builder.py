@@ -3,7 +3,7 @@
 #
 # The Python script in this file produces UEF representations of Acorn tapes.
 #
-# Copyright (C) 2022-2024 Dominic Ford <https://dcford.org.uk/>
+# Copyright (C) 2022-2025 Dominic Ford <https://dcford.org.uk/>
 #
 # This code is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -34,10 +34,10 @@ class UefFileBuilder:
         """
 
         # First compile output into a buffer
-        self.output = bytearray()
+        self.output: bytearray = bytearray()
 
         # Baud rate (used to convert time intervals into baud units)
-        self.baud_rate = 1200
+        self.baud_rate: float = 1200
 
         # Write file header
         self.output.extend("UEF File!\0".encode("ascii"))  # ID header
@@ -45,7 +45,7 @@ class UefFileBuilder:
         self.output.append(0)  # UEF format minor version
 
         # Write origin block
-        origin_string = "acorn-tape-reader <https://github.com/dcf21/acorn-tape-reader>\0"
+        origin_string: str = "acorn-tape-reader <https://github.com/dcf21/acorn-tape-reader>\0"
         self._write_chunk_header(chunk_type=0, length=len(origin_string))
         self.output.extend(origin_string.encode("ascii"))
 
@@ -96,7 +96,7 @@ class UefFileBuilder:
         """
 
         # Convert duration into units of baud
-        duration_cycles = int(duration * (self.baud_rate * 2))
+        duration_cycles: int = int(duration * (self.baud_rate * 2))
         if duration_cycles < 1:
             duration_cycles = 1
         if duration_cycles > 0xFFFF:
@@ -120,7 +120,7 @@ class UefFileBuilder:
         """
 
         # Convert duration into units of baud
-        duration_cycles = int(duration * (self.baud_rate * 2))
+        duration_cycles: int = int(duration * (self.baud_rate * 2))
         if duration_cycles < 1:
             duration_cycles = 1
         if duration_cycles > 0xFFFF:

@@ -3,7 +3,7 @@
 #
 # The Python script in this file contains ASCII and Commodore BASIC lookup tables.
 #
-# Copyright (C) 2022-2024 Dominic Ford <https://dcford.org.uk/>
+# Copyright (C) 2022-2025 Dominic Ford <https://dcford.org.uk/>
 #
 # This code is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -26,26 +26,28 @@ https://www.c64-wiki.com/wiki/BASIC_token
 https://en.wikipedia.org/wiki/PETSCII#Commodore_64_control_characters
 """
 
+from typing import Dict
+
 # Commodore display-code lookup table
-cbm_display_codes = r"""@ABCDEFGHIJKLMNOPQRSTUVWXYZ[£].. !"#$%&'()*+,-./0123456789:;<=>?""" \
-                    r"""@abcdefghijklmnopqrstuvwxyz[£]...ABCDEFGHIJKLMNOPQRSTUVWXYZ.....""" \
-                    r"""................................................................""" \
-                    r"""................................................................"""
+cbm_display_codes: str = r"""@ABCDEFGHIJKLMNOPQRSTUVWXYZ[£].. !"#$%&'()*+,-./0123456789:;<=>?""" \
+                         r"""@abcdefghijklmnopqrstuvwxyz[£]...ABCDEFGHIJKLMNOPQRSTUVWXYZ.....""" \
+                         r"""................................................................""" \
+                         r"""................................................................"""
 
 # PETSCII lookup table (in uppercase mode)
-petscii_upper = r"""................................ !"#$%&'()*+,-./0123456789:;<=>?""" \
-                r"""@ABCDEFGHIJKLMNOPQRSTUVWXYZ[£]↑←🭹♠🭲🭸🭷🭶🭺🭱🭴╮╰╯🭼╲╱🭽🭾●🭻♥🭰╭╳○♣🭵♦┼🮌│π◥""" \
-                r"""................................ ▌▄▔▁▏▒▕🮏◤🮇├▗└┐▂┌┴┬┤▎▍🮈🮂🮃▃🭿▖▝┘▘▚""" \
-                r"""🭹♠🭲🭸🭷🭶🭺🭱🭴╮╰╯🭼╲╱🭽🭾●🭻♥🭰╭╳○♣🭵♦┼🮌│π◥ ▌▄▔▁▏▒▕🮏◤🮇├▗└┐▂┌┴┬┤▎▍🮈🮂🮃▃🭿▖▝┘▘π"""
+petscii_upper: str = r"""................................ !"#$%&'()*+,-./0123456789:;<=>?""" \
+                     r"""@ABCDEFGHIJKLMNOPQRSTUVWXYZ[£]↑←🭹♠🭲🭸🭷🭶🭺🭱🭴╮╰╯🭼╲╱🭽🭾●🭻♥🭰╭╳○♣🭵♦┼🮌│π◥""" \
+                     r"""................................ ▌▄▔▁▏▒▕🮏◤🮇├▗└┐▂┌┴┬┤▎▍🮈🮂🮃▃🭿▖▝┘▘▚""" \
+                     r"""🭹♠🭲🭸🭷🭶🭺🭱🭴╮╰╯🭼╲╱🭽🭾●🭻♥🭰╭╳○♣🭵♦┼🮌│π◥ ▌▄▔▁▏▒▕🮏◤🮇├▗└┐▂┌┴┬┤▎▍🮈🮂🮃▃🭿▖▝┘▘π"""
 
 # PETSCII lookup table (in lowercase mode)
-petscii_lower = r"""................................ !"#$%&'()*+,-./0123456789:;<=>?""" \
-                r"""@abcdefghijklmnopqrstuvwxyz[£]↑←🭹ABCDEFGHIJKLMNOPQRSTUVWXYZ┼🮌│🮖🮘""" \
-                r"""................................ ▌▄▔▁▏▒▕🮏🮙🮇├▗└┐▂┌┴┬┤▎▍🮈🮂🮃▃✓▖▝┘▘▚""" \
-                r"""🭹ABCDEFGHIJKLMNOPQRSTUVWXYZ┼🮌│🮖🮘 ▌▄▔▁▏▒▕🮏🮙🮇├▗└┐▂┌┴┬┤▎▍🮈🮂🮃▃✓▖▝┘▘🮖"""
+petscii_lower: str = r"""................................ !"#$%&'()*+,-./0123456789:;<=>?""" \
+                     r"""@abcdefghijklmnopqrstuvwxyz[£]↑←🭹ABCDEFGHIJKLMNOPQRSTUVWXYZ┼🮌│🮖🮘""" \
+                     r"""................................ ▌▄▔▁▏▒▕🮏🮙🮇├▗└┐▂┌┴┬┤▎▍🮈🮂🮃▃✓▖▝┘▘▚""" \
+                     r"""🭹ABCDEFGHIJKLMNOPQRSTUVWXYZ┼🮌│🮖🮘 ▌▄▔▁▏▒▕🮏🮙🮇├▗└┐▂┌┴┬┤▎▍🮈🮂🮃▃✓▖▝┘▘🮖"""
 
 # PETSCII control characters (C64 with C16 additions)
-petscii_ctrl = {
+petscii_ctrl: Dict[int, str] = {
     0x3: "stop", 0x5: "white", 0x8: "shift disable", 0x9: "shift enable", 0xD: "return", 0xE: "text mode",
     0x11: "cursor down", 0x12: "reverse on", 0x13: "home", 0x14: "del",
     0x1B: "esc", 0x1C: "red", 0x1D: "cursor right", 0x1E: "green", 0x1F: "blue",
@@ -58,13 +60,13 @@ petscii_ctrl = {
 }
 
 # ASCII lookup table
-ascii = r"""................................ !"#$%&'()*+,-./0123456789:;<=>?""" \
-        r"""@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz.....""" \
-        r"""................................................................""" \
-        r"""................................................................"""
+ascii: str = r"""................................ !"#$%&'()*+,-./0123456789:;<=>?""" \
+             r"""@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz.....""" \
+             r"""................................................................""" \
+             r"""................................................................"""
 
 # Commodore BASIC tokens - including all tokens used by BASIC 2.0 (C64), BASIC 3.5 (C16) and BASIC 7.0 (C128)
-commodore_basic_tokens = {
+commodore_basic_tokens: Dict[int, str] = {
     # BASIC 2.0
     0x80: "END",
     0x81: "FOR",

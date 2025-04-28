@@ -4,7 +4,7 @@
 # The Python script in this file provides a utility class for extracting files
 # from WAV recordings containing the audio of tapes recorded by 8-bit computers.
 #
-# Copyright (C) 2022-2024 Dominic Ford <https://dcford.org.uk/>
+# Copyright (C) 2022-2025 Dominic Ford <https://dcford.org.uk/>
 #
 # This code is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -28,7 +28,7 @@ import warnings
 
 from scipy import signal
 from scipy.io import wavfile
-from typing import List
+from typing import List, Optional, Tuple
 
 # This is a bit dangerous, but it's a pity the scipy developers feel the need to produce spam warnings every time they
 # see a WAV header field they don't recognise...
@@ -54,7 +54,10 @@ class WavFileReader:
         """
 
         # Input settings
-        self.input_filename = input_filename
+        self.input_filename: str = input_filename
+        self.sampling_frequency: float
+        self.wav_data_all_channels: np.ndarray
+        self.channels: int
 
         # Open wav file
         if input_filename is not None:
@@ -63,7 +66,7 @@ class WavFileReader:
             self.sampling_frequency = 1
             self.wav_data_all_channels = np.asarray([0])
 
-        # If audio file is stereo, use the first available channel
+        # If the audio file is stereo, use the first available channel
         if len(self.wav_data_all_channels.shape) > 1:
             self.channels = len(self.wav_data_all_channels.shape)
         else:
@@ -77,10 +80,10 @@ class WavFileReader:
         self.min_wave_amplitude_value: float = 0
 
         # Keep track of position in file
-        self.position = 0
+        self.position: int = 0
 
         # Pointer to the channel we've selected to read
-        self.wav_data = None
+        self.wav_data: Optional[np.ndarray] = None
         self.select_channel(channel=0)
 
         # Report metadata about the wav file
@@ -88,7 +91,7 @@ class WavFileReader:
             logging.info("Opened <{}>: {} channels, {} frames/sec, length {:.0f}m{:.1f}s".format(
                 self.input_filename, self.channels, self.sampling_frequency, self.length / 60, self.length % 60))
 
-    def select_channel(self, channel: int):
+    def select_channel(self, channel: int) -> None:
         """
         Select which channel of the audio we are to act on.
 
@@ -98,9 +101,9 @@ class WavFileReader:
             None
         """
 
-        assert 0 <= channel < self.channels, "No such channel <{}>".format(channel)
+        assert 0 <= channel < self.channels, "No such audio channel <{}>".format(channel)
 
-        # Select channel
+        # Select audio channel
         if len(self.wav_data_all_channels.shape) > 1:
             self.wav_data = self.wav_data_all_channels[:, channel]  # Convert 2D array into 1D array
         else:
@@ -117,35 +120,39 @@ class WavFileReader:
         # Keep track of position in file
         self.position = 0
 
-    def apply_high_pass_filter(self, cutoff: float):
+    def apply_high_pass_filter(self, cutoff: float) -> None:
         """
         Apply a high-pass Butterworth filter to remove low-frequency noise
 
         :param cutoff:
             The frequency of the filter cut-off / Hertz
-
         :return:
             None
         """
 
-        def butter_highpass(cutoff, fs, order=5):
-            nyq = 0.5 * fs
-            normal_cutoff = cutoff / nyq
-            b, a = signal.butter(N=order, Wn=normal_cutoff, btype="high", analog=False)
+        def butter_highpass(cutoff: float, fs: float, order: int = 5) -> Tuple[np.ndarray, np.ndarray]:
+            nyq: float = 0.5 * fs
+            normal_cutoff: float = cutoff / nyq
+            a: np.ndarray
+            b: np.ndarray
+            b, a = signal.butter(N=order, Wn=normal_cutoff, btype="high", analog=False, output='ba')
             return b, a
 
-        def butter_highpass_filter(data, cutoff, fs, order=5):
-            b, a = butter_highpass(cutoff, fs, order=order)
-            y = signal.filtfilt(b, a, data)
+        def butter_highpass_filter(data: np.ndarray, cutoff: float, fs: float, order: int = 5) -> np.ndarray:
+            a: np.ndarray
+            b: np.ndarray
+            b, a = butter_highpass(cutoff=cutoff, fs=fs, order=order)
+            y: np.ndarray = signal.filtfilt(b, a, data)
             return y
 
         # Apply high-pass filter
+        filtered_data: np.ndarray
         filtered_data = butter_highpass_filter(data=self.wav_data, cutoff=cutoff, fs=self.sampling_frequency)
 
-        # Replace original signal with filtered signal
+        # Replace the original signal with filtered signal
         self.wav_data = filtered_data
 
-    def rewind(self):
+    def rewind(self) -> None:
         """
         Return to the beginning of the WAV file.
 
@@ -155,14 +162,14 @@ class WavFileReader:
 
         self.position = 0
 
-    def fetch_wav_file_sample(self, invert_wave: bool = False):
+    def fetch_wav_file_sample(self, invert_wave: bool = False) -> Optional[float]:
         """
         Fetch a single sample from a 16-bit mono WAV file.
 
         :param invert_wave:
             Boolean indicating whether we invert the waveform.
         :return:
-            A 16-bit signed integer value
+            A 16-bit signed integer value, converted to a float
         """
 
         # Check that we are within the bounds of the input data
@@ -170,7 +177,7 @@ class WavFileReader:
             return None
 
         # Fetch a single frame from the wav file
-        frame_value = self.wav_data[self.position]
+        frame_value: float = float(self.wav_data[self.position])
 
         # Invert wave if requested
         if invert_wave:
@@ -182,7 +189,7 @@ class WavFileReader:
         # Return the frame value
         return frame_value
 
-    def fetch_zero_crossing_times(self, invert_wave: bool = False):
+    def fetch_zero_crossing_times(self, invert_wave: bool = False) -> List[float]:
         """
         Extract a list of all the times when the signal on the tape crosses zero, in the downward direction. We only
         count crossings when the wave amplitude exceeds <self.min_wave_amplitude_value> to avoid detecting many
@@ -192,21 +199,28 @@ class WavFileReader:
             Boolean indicating whether we invert the waveform before searching for descending zero-crossings (meaning
             that we actually look for ascending crossings).
         :return:
-            List[float] of times of zero-crossings, in seconds
+            List[float] of the times of the wave zero crossings, in seconds
         """
 
         # Start from the beginning of the file
         self.rewind()
 
-        file_position = 0  # Current file position - sample number
-        zero_crossing_times: List[float] = []  # Output list of zero-crossing times
-        seen_adequate_amplitude = False  # Flag indicating whether the wave amplitude is greater than minimum allowed
-        was_above_zero = False  # Flag indicating whether previous audio sample was greater than zero
+        # Current file position - sample number
+        file_position: int = 0
 
-        # Cycle through file, sample by sample, looking for downward zero crossings
+        # Output list of zero-crossing times
+        zero_crossing_times: List[float] = []
+
+        # Flag indicating whether the wave amplitude is greater than minimum allowed
+        seen_adequate_amplitude: bool = False
+
+        # Flag indicating whether the previous audio sample was greater than zero
+        was_above_zero: bool = False
+
+        # Cycle through the file, sample by sample, looking for downward zero crossings
         while True:
             # Fetch a single frame from the wav file
-            frame_value = self.fetch_wav_file_sample(invert_wave=invert_wave)
+            frame_value: Optional[float] = self.fetch_wav_file_sample(invert_wave=invert_wave)
 
             # Check for end of audio stream
             if frame_value is None:
@@ -230,10 +244,10 @@ class WavFileReader:
         # Log number of zero-crossings
         logging.debug("Found {:d} zero-crossing events".format(len(zero_crossing_times)))
 
-        # Return list of time points in wav file where wave crosses zero
+        # Return list of time points in the wav file where the wave crosses zero
         return zero_crossing_times
 
-    def fetch_wave_peak_times(self, bracket_window: int, invert_wave: bool = False):
+    def fetch_wave_peak_times(self, bracket_window: int, invert_wave: bool = False) -> List[float]:
         """
         Extract a list of all the times when the signal on the tape passes a maximum.
 
@@ -244,26 +258,26 @@ class WavFileReader:
             Boolean indicating whether we invert the waveform before searching for peaks (meaning that we actually
             look for troughs).
         :return:
-            List[float] of times of wave peaks, in seconds
+            List[float] of the times of the peaks in the audio wave, in seconds
         """
 
         # Start from the beginning of the file
         self.rewind()
 
         # Check that bracket window is an adequately-sized integer
-        bracket_window = int(bracket_window)
+        bracket_window: int = int(bracket_window)
         assert bracket_window > 10, "Unreasonably short bracket_window."
-        buffer_middle = int(bracket_window / 2)
+        buffer_middle: int = int(bracket_window / 2)
 
         # Start building list of wave peak times
-        file_position = 0  # Current file position - sample number
+        file_position: int = 0  # Current file position - sample number
         peak_times: List[float] = []  # Output list of wave-peak times
-        buffer = []  # Rolling buffer of length <bracket>, used to check peak is highest in neighbourhood
+        buffer: List[float] = []  # Rolling buffer of length <bracket>, used to check peak is highest in neighbourhood
 
         # Cycle through file looking for wave peaks
         while True:
             # Fetch a single frame from the wav file
-            frame_value = self.fetch_wav_file_sample(invert_wave=invert_wave)
+            frame_value: Optional[float] = self.fetch_wav_file_sample(invert_wave=invert_wave)
 
             # Check for end of audio stream
             if frame_value is None:
@@ -301,7 +315,7 @@ class WavFileReader:
         return peak_times
 
     @staticmethod
-    def fetch_pulse_list(input_events: List):
+    def fetch_pulse_list(input_events: List) -> List[dict]:
         """
         Extract a list of the intervals (in seconds) representing a single wave cycle. We call these intervals
         'pulses', in common with the literature on the Commodore tape format (though we also use the same method
@@ -315,12 +329,12 @@ class WavFileReader:
             A list of dictionaries describing the intervals, called pulses, in which there is a single wave cycle
         """
 
-        pulse_list = []  # List of all the pulses (wave cycles) we found
+        pulse_list: List[dict] = []  # List of all the pulses (wave cycles) we found
 
         # Loop through all the input events which signify the start of a new wave cycle
         for i in range(1, len(input_events)):
             # Calculate the time elapsed since the start of the previous wave cycle
-            pulse_length = input_events[i] - input_events[i - 1]
+            pulse_length: float = input_events[i] - input_events[i - 1]
 
             # Add a descriptor for this cycle
             pulse_list.append({
@@ -331,7 +345,7 @@ class WavFileReader:
         # Return pulse (wave cycle) list
         return pulse_list
 
-    def time_string(self, file_position=None):
+    def time_string(self, file_position: Optional[int] = None) -> str:
         """
         Return a human-readable string representation of a time point in the audio stream.
 
@@ -346,7 +360,7 @@ class WavFileReader:
             file_position = self.position
 
         # Convert file position (sample number) into a time-point measured in seconds
-        file_time = file_position / self.sampling_frequency
+        file_time: float = file_position / self.sampling_frequency
 
         # Return a human-readable timestamp
         return "[{:10.5f}]".format(file_time)
